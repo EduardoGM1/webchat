@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Random Video Chat</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f4f4f9;
+      margin: 0;
+      padding: 0;
+    }
+    #header {
+      background-color: #4CAF50;
+      color: white;
+      padding: 15px;
+      font-size: 28px;
+      text-align: center;
+      border-bottom: 2px solid #388E3C;
+    }
+    #controls {
+      margin: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #controls label {
+      font-size: 18px;
+      color: #333;
+    }
+    #filter {
+      margin: 10px 0;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      background-color: #fff;
+    }
+    #controls button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 5px;
+      margin: 5px;
+    }
+    #controls button:hover {
+      background-color: #45a049;
+    }
+    #cameraStatus {
+      font-size: 18px;
+      color: #333;
+      margin: 15px 0;
+    }
+    #videoContainer {
+      display: flex;
+      justify-content: center;
+      margin: 20px;
+    }
+    video {
+      border: 2px solid #4CAF50;
+      border-radius: 8px;
+      width: 45%;
+      margin: 10px;
+      background-color: #000;
+    }
+    #videoContainer video:first-child {
+      margin-right: 20px;
+    }
+    #chatContainer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 20px;
+    }
+    #chatMessages {
+      width: 80%;
+      height: 150px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      overflow-y: auto;
+      background-color: #fff;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    #chatInput {
+      display: flex;
+      width: 80%;
+    }
+    #chatInput input {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 5px 0 0 5px;
+    }
+    #chatInput button {
+      padding: 10px 20px;
+      font-size: 16px;
+      border: none;
+      border-radius: 0 5px 5px 0;
+      background-color: #4CAF50;
+      color: white;
+      cursor: pointer;
+    }
+    #chatInput button:hover {
+      background-color: #45a049;
+    }
+    #status {
+      font-size: 16px;
+      color: #666;
+      margin-top: 20px;
+    }
+    .spinner {
+    border: 16px solid #f3f3f3;
+    border-radius: 50%;
+    border-top: 16px solid #3498db;
+    width: 120px;
+    height: 120px;
+    animation: spin 2s linear infinite;
+    display: none;
+    margin: 20px auto;
+  }
+
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  </style>
+</head>
+<body>
+  <div id="header">Random Video Chat</div>
+  
+  <div id="controls">
+    <label for="filter">Select Filter:</label>
+    <select id="filter">
+      <option value="any">Any</option>
+      <option value="gaming">Gaming</option>
+      <option value="music">Music</option>
+    </select>
+    <button id="report">Report</button>
+
+    <button id="start">Start Chat</button>
+    <button id="mute">Mute</button>
+    <button id="next">Next Chat</button>
+  </div>
+  
+  <div id="cameraStatus">Your Camera: Loading...</div>
+  
+  <div id="videoContainer">
+    <video id="localVideo" autoplay muted></video>
+    <video id="remoteVideo" autoplay></video>
+  </div>
+
+  <div id="chatContainer">
+    <div id="chatMessages"></div>
+    <div id="chatInput">
+      <input type="text" id="messageInput" placeholder="Type your message here...">
+      <button id="sendMessage">Send</button>
+    </div>
+  </div>
+  <div id="loadingSpinner" class="spinner"></div>
+
+  <div id="status">Status: Disconnected</div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let localStream;
+    let peerConnection;
+    let isMuted = false;
+    const servers = null; // Use default STUN/TURN servers
+    const messageInput = document.getElementById('messageInput');
+
+    document.getElementById('start').addEventListener('click', () => {
+      const filter = document.getElementById('filter').value;
+      socket.emit('joinRoom', filter);
+    });
+
+    document.getElementById('mute').addEventListener('click', () => {
+      const localVideo = document.getElementById('localVideo');
+      isMuted = !isMuted;
+      localStream.getAudioTracks().forEach(track => track.enabled = !isMuted);
+      document.getElementById('mute').textContent = isMuted ? 'Unmute' : 'Mute';
+    });
+
+    document.getElementById('next').addEventListener('click', () => {
+      if (peerConnection) {
+        peerConnection.close();
+      }
+      const filter = document.getElementById('filter').value;
+      socket.emit('joinRoom', filter);
+    });
+
+    document.getElementById('sendMessage').addEventListener('click', () => {
+      const message = messageInput.value.trim();
+      if (message) {
+        if (!isValidMessage(message)) {
+          alert('Invalid message');
+          return;
+        }
+        socket.emit('message', message);
+        messageInput.value = '';
+        appendMessage(`You: ${message}`);
+      }
+    });
+
+    socket.on('matched', (remoteId) => {
+      startCall(remoteId);
+      updateStatus('Connected');
+    });
+
+    socket.on('message', (message) => {
+      appendMessage(`Stranger: ${message}`);
+    });
+
+
+    
+
+    function appendMessage(message) {
+      const chatMessages = document.getElementById('chatMessages');
+      const messageElement = document.createElement('div');
+      messageElement.textContent = message;
+      chatMessages.appendChild(messageElement);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    async function startCall(remoteId) {
+      peerConnection = new RTCPeerConnection(servers);
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      document.getElementById('localVideo').srcObject = localStream;
+
+      // Update camera status
+      const cameraStatus = document.getElementById('cameraStatus');
+      const videoTrack = localStream.getVideoTracks()[0];
+      cameraStatus.textContent = `Your Camera: ${videoTrack.label || 'Unknown'}`;
+
+      localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream);
+      });
+
+      peerConnection.ontrack = (event) => {
+        document.getElementById('remoteVideo').srcObject = event.streams[0];
+      };
+
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('signal', {
+            to: remoteId,
+            signal: event.candidate
+          });
+        }
+      };
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      socket.emit('signal', {
+        to: remoteId,
+        signal: offer
+      });
+    }
+
+    socket.on('signal', async (data) => {
+      if (!peerConnection) {
+        await startCall(data.from);
+      }
+
+      if (data.signal.type === 'offer') {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit('signal', {
+          to: data.from,
+          signal: answer
+        });
+      } else if (data.signal.type === 'answer') {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal));
+      } else if (data.signal.candidate) {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal));
+      }
+    });
+
+    function updateStatus(status) {
+      document.getElementById('status').textContent = `Status: ${status}`;
+    }
+
+    socket.on('disconnect', () => {
+      updateStatus('Disconnected');
+    });
+
+
+
+    document.getElementById('report').addEventListener('click', () => {
+    const reason = prompt("Enter the reason for reporting:");
+    if (reason) {
+      const matchedUser = users[socket.id]?.matchedUser;
+      if (matchedUser) {
+        socket.emit('report', { reportedUser: matchedUser, reason });
+      }
+    }
+  });
+
+  socket.on('reportAcknowledged', () => {
+    alert('Your report has been acknowledged. Thank you.');
+  });
+
+    // Utility functions
+    function isValidMessage(message) {
+      const forbiddenWords = ['badword1', 'badword2']; // Add more as needed
+      return !forbiddenWords.some(word => message.includes(word));
+    }
+  </script>
+</body>
+</html>
